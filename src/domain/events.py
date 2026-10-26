@@ -16,8 +16,22 @@ class MarketBarEvent:
 
 
 @dataclass(frozen = True)
+class Metric:
+    name: str
+    value: float
+
+
+@dataclass(frozen = True)
 class SignalEvent:
-    '''
-        #TODO: Complete
-    '''
-    ...
+    symbol: str
+    action: str
+    units: float
+    confidence: float
+    strategy_name: str
+
+
+@dataclass(frozen = True)
+class MetricEvent:
+    symbol: str
+    strategy_name: str
+    metrics: list[Metric]
