@@ -1,10 +1,15 @@
 '''
 market_data/feed.py
 '''
-from typing import Protocol, Sequence
+from typing import Protocol, Sequence, TypeAlias
 from datetime import datetime
 from enums import TimeResolution
 from src.spine.events import MarketBarEvent
+from .value_objects import MarketBar
+from pandas import DataFrame
+
+HistoricalData: TypeAlias = pd.DataFrame | Sequence[MarketBar] #Will most likely have to stick with Dataframe because conversion cost between MarketBar and Dataframe is too expensive?
+
 
 class MarketDataProvider(Protocol):
     '''
@@ -15,7 +20,7 @@ class MarketDataProvider(Protocol):
                             symbol: str,
                             start: datetime,
                             end: datetime,
-                            timeframe: TimeResolution = TimeResolution.DAILY) -> Sequence[MarketBarEvent]: #We'll focus on the output later; it'll most likely be returned to router instead
+                            timeframe: TimeResolution = TimeResolution.DAILY) -> HistoricalData: #We'll focus on the output later
         '''Fetches historical bars to warm up a strategy'''
         ...
 
@@ -34,4 +39,4 @@ class AlpacaDataFeed:
     Alpaca Market feed
     #TODO: Complete
     '''
-
+    ....

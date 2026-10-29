@@ -5,7 +5,6 @@ This module holds events. An event is an immutable object that represents someth
 
 
 '''
-from __future__ import annotations
 from dataclasses import dataclass
 
 '''
@@ -23,19 +22,11 @@ DATA EVENTS
 '''
 
 @dataclass(frozen = True)
-class MarketBarEvent:
+class MarketBarEvent(Event):
     '''
         #TODO: Complete
     '''
     ...
-
-    def __post_init__(self):
-        ... #Simple Data Validation.
-
-    @classmethod
-    def from_dict(cls, data: dict[str, float | int | str]) -> MarketBarEvent:
-        '''Conversion from dictionary'''
-        ...
 
 
 '''
@@ -43,7 +34,7 @@ STRATEGY EVENTS
 '''
 
 @dataclass(frozen = True)
-class SignalEvent:
+class SignalEvent(Event):
     '''
         #TODO: Complete
     '''
