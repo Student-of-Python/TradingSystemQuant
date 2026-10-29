@@ -1,17 +1,16 @@
 '''
-
+src/spine/events.py
 
 This module holds events. An event is an immutable object that represents something that has already occured.
-
-
 '''
 from dataclasses import dataclass
 
+
 '''
-Base Event
+BASE EVENT
 '''
 
-@dataclass(frozen = True)
+@dataclass(frozen=True)
 class Event:
     '''Base event'''
     ...
@@ -21,7 +20,7 @@ class Event:
 DATA EVENTS
 '''
 
-@dataclass(frozen = True)
+@dataclass(frozen=True)
 class MarketBarEvent(Event):
     '''
         #TODO: Complete
@@ -33,9 +32,23 @@ class MarketBarEvent(Event):
 STRATEGY EVENTS
 '''
 
-@dataclass(frozen = True)
+@dataclass(frozen=True)
+class Metric:
+    name: str
+    value: float
+
+
+@dataclass(frozen=True)
 class SignalEvent(Event):
-    '''
-        #TODO: Complete
-    '''
-    ...
+    symbol: str
+    action: str
+    units: float
+    confidence: float
+    strategy_name: str
+
+
+@dataclass(frozen=True)
+class MetricEvent(Event):
+    symbol: str
+    strategy_name: str
+    metrics: list[Metric]
