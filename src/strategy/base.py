@@ -5,7 +5,7 @@ from typing import Protocol, Sequence
 from pandas import DataFrame
 from src.spine.events import MarketBarEvent
 from strategy_output import StrategyOutput
-from market_data.value_objects import MarketBar
+from src.market_data.value_objects import MarketBar
 
 HistoricalData: TypeAlias = pd.DataFrame | Sequence[MarketBar] #Will most likely have to stick with Dataframe because conversion cost between MarketBar and Dataframe is too expensive?
 
