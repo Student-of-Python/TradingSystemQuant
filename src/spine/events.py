@@ -4,6 +4,7 @@ src/spine/events.py
 This module holds events. An event is an immutable object that represents something that has already occured.
 '''
 from dataclasses import dataclass
+from src.market_data.value_objects import MarketBar
 
 
 '''
@@ -22,10 +23,7 @@ DATA EVENTS
 
 @dataclass(frozen=True)
 class MarketBarEvent(Event):
-    '''
-        #TODO: Complete
-    '''
-    ...
+    bar: MarketBar
 
 
 '''

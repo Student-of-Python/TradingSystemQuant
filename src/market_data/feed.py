@@ -3,12 +3,14 @@ market_data/feed.py
 '''
 from typing import Protocol, Sequence, TypeAlias
 from datetime import datetime
-from enums import TimeResolution
-from src.spine.events import MarketBarEvent
-from .value_objects import MarketBar
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+from src.market_data.enums import TimeResolution
+from src.market_data.value_objects import MarketBar
 from pandas import DataFrame
 
-HistoricalData: TypeAlias = pd.DataFrame | Sequence[MarketBar] #Will most likely have to stick with Dataframe because conversion cost between MarketBar and Dataframe is too expensive?
+HistoricalData: TypeAlias = DataFrame | Sequence[MarketBar] #Will most likely have to stick with Dataframe because conversion cost between MarketBar and Dataframe is too expensive?
 
 
 class MarketDataProvider(Protocol):
@@ -37,6 +39,27 @@ class MarketDataProvider(Protocol):
 class AlpacaDataFeed:
     '''
     Alpaca Market feed
-    #TODO: Complete
     '''
-    ...
+
+    _TIMEFRAMES = {
+        TimeResolution.MINUTE: TimeFrame.Minute,
+        TimeResolution.HOURLY: TimeFrame.Hour,
+        TimeResolution.DAILY: TimeFrame.Day,
+    }
+
+    def __init__(self, api_key: str, secret_key: str):
+        self._client = StockHistoricalDataClient(api_key, secret_key)
+
+    def get_historical_bars(self,
+                            symbol: str,
+                            start: datetime,
+                            end: datetime,
+                            timeframe: TimeResolution = TimeResolution.DAILY) -> DataFrame:
+        '''Fetches historical bars to warm up a strategy'''
+        request = StockBarsRequest(
+            symbol_or_symbols=symbol,
+            start=start,
+            end=end,
+            timeframe=self._TIMEFRAMES[timeframe],
+        )
+        return self._client.get_stock_bars(request).df
