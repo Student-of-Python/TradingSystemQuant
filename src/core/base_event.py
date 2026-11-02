@@ -1,5 +1,5 @@
 '''
-src/spine/events.py
+src/core/events.py
 
 This module holds events. An event is an immutable object that represents something that has already occured.
 '''

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from src.spine.events import Metric, MetricEvent, SignalEvent
+from src.core.events import Metric, MetricEvent, SignalEvent
 
 
 @dataclass(frozen=True)
