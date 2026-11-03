@@ -1,7 +1,8 @@
+from src.core.base_event import Metric, MetricEvent, SignalEvent
+from src.strategy.domain.value import StrategyOutput
 import unittest
+import pytest
 
-from src.spine.events import Metric, MetricEvent, SignalEvent
-from src.strategy.strategy_output import StrategyOutput, split_output
 
 
 class SplitOutputTest(unittest.TestCase):
