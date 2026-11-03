@@ -2,5 +2,5 @@
 src/core/exceptions/exceptions.py
 '''
 
-class InvalidDataType(Exception):
+class InvalidDataTypeError(Exception):
     pass
