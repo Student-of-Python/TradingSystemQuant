@@ -1,11 +1,10 @@
 '''
-market_data/feed.py
+data/feed.py
 '''
+from src.data.domain.enums import TimeResolution
 from typing import Protocol, Sequence, TypeAlias
+from src.data.domain.value import MarketBar
 from datetime import datetime
-from enums import TimeResolution
-from src.spine.events import MarketBarEvent
-from .value_objects import MarketBar
 from pandas import DataFrame
 
 HistoricalData: TypeAlias = pd.DataFrame | Sequence[MarketBar] #Will most likely have to stick with Dataframe because conversion cost between MarketBar and Dataframe is too expensive?
