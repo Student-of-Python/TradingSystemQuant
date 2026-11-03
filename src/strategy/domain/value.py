@@ -1,19 +1,23 @@
+'''
+src/strategy/domain/value.py
+'''
+
+
 from dataclasses import dataclass
-
-from src.core.events import Metric, MetricEvent, SignalEvent
-
+from enums import StrategyAction
+from decimal import Decimal
 
 @dataclass(frozen=True)
 class StrategyOutput:
     symbol: str
-    action: str          # BUY, SELL, or HOLD
-    units: float
-    confidence: float
+    action: StrategyAction # BUY, SELL, or HOLD
+    units: Decimal #Decimal
+    confidence: Decimal #Also more decimal
     strategy_name: str
-    metrics: list[Metric]
 
 
-def split_output(output: StrategyOutput) -> tuple[SignalEvent, MetricEvent]:
+
+'''def split_output(output: StrategyOutput) -> tuple[SignalEvent, MetricEvent]:
     signal = SignalEvent(
         output.symbol,
         output.action,
@@ -23,3 +27,4 @@ def split_output(output: StrategyOutput) -> tuple[SignalEvent, MetricEvent]:
     )
     metric = MetricEvent(output.symbol, output.strategy_name, list(output.metrics))
     return signal, metric
+'''

@@ -1,11 +1,11 @@
 '''
 src/strategy/base.py
 '''
-from typing import Protocol, Sequence
+from typing import Protocol, Sequence, TypeAlias
+from src.data.domain.events import MarketBarEvent
+from src.data.domain.value import MarketBar
+from src.strategy.domain.value import StrategyOutput
 from pandas import DataFrame
-from src.spine.events import MarketBarEvent
-from strategy_output import StrategyOutput
-from src.market_data.value_objects import MarketBar
 
 HistoricalData: TypeAlias = pd.DataFrame | Sequence[MarketBar] #Will most likely have to stick with Dataframe because conversion cost between MarketBar and Dataframe is too expensive?
 
