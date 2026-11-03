@@ -1,9 +1,9 @@
 '''
-src/core/exceptions/error.py
+src/core/results/error.py
 '''
 from __future__ import annotations
 from dataclasses import dataclass
-from enums import ErrorCode
+from .enums import ErrorCode
 from typing import Any
 
 @dataclass(frozen = True)

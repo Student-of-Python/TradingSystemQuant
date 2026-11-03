@@ -1,9 +1,9 @@
 '''
-src/core/exceptions/result.py
+src/core/results/result.py
 '''
 from __future__ import annotations
 from dataclasses import dataclass
-from error import Error
+from .error import Error
 
 
 @dataclass(frozen = True)
