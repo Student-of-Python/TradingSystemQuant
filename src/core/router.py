@@ -1,26 +1,26 @@
 '''
-src/spine/router.py
+src/core/router.py
 #TODO: Make test cases
 '''
 from typing import Callable, Iterable, overload
 from collections import defaultdict, deque
-from .events import Event
+from .base_event import BaseEvent
 
 
 class EventRouter:
     def __init__(self):
-        self._queue: deque[Event] = deque()
-        self._registry: defaultdict[type[Event], set[Callable[..., None]]] = defaultdict(set)
+        self._queue: deque[BaseEvent] = deque()
+        self._registry: defaultdict[type[BaseEvent], set[Callable[..., None]]] = defaultdict(set)
 
     @overload
-    def subscribe[T: Event](self, event: type[T], contact: Callable[[T], None]) -> None:
+    def subscribe[T: BaseEvent](self, event: type[T], contact: Callable[[T], None]) -> None:
         ...
 
     @overload
-    def subscribe[T: Event](self, event: Iterable[type[T]], contact: Callable[[T], None]) -> None:
+    def subscribe[T: BaseEvent](self, event: Iterable[type[T]], contact: Callable[[T], None]) -> None:
         ...
 
-    def subscribe[T: Event](self, event: type[T] | Iterable[type[T]],
+    def subscribe[T: BaseEvent](self, event: type[T] | Iterable[type[T]],
                             contact: Callable[[T], None]) -> None:
         """Adds event & func to the registry"""
 
@@ -30,7 +30,7 @@ class EventRouter:
             self._registry[e].add(contact)
 
 
-    def publish(self, *event: Event) -> None:
+    def publish(self, *event: BaseEvent) -> None:
         '''Adds event to the queue'''
         self._queue.extend(event)
 
@@ -44,6 +44,8 @@ class EventRouter:
         _funcs = self._registry[type(_next)]
 
         if _funcs:
-
             for func in _funcs:
-                func(_next)
+                try:
+                    func(_next)
+                except Exception as error:
+                    pass #log / pass error?. If error, don't want it to interrupt different strategies.
