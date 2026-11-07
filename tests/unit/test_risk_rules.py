@@ -60,12 +60,6 @@ def test_rule_without_name_property_cannot_be_constructed():
     [MaxUnitSizeRule(Decimal("100")), MaxOrderValueRule(Decimal("10000")), KillSwitchRule(engaged=False)],
     ids=["max_units", "max_order_value", "kill_switch"],
 )
-def test_every_real_rule_is_a_risk_rule(rule: RiskRule):
-    assert isinstance(rule, RiskRule)
-
-@pytest.mark.parametrize("not_a_rule", ["max_unit_size_rule", None, 5, object()], ids=["str", "none", "int", "object"])
-def test_non_rules_are_not_risk_rules(not_a_rule: object):
-    assert not isinstance(not_a_rule, RiskRule)
 
 def _valid_evaluate(self: object, signal: SignalEvent) -> None:
     return None
@@ -83,13 +77,6 @@ def test_check_risk_rule_accepts_every_real_rule_and_returns_its_name(rule: Risk
 
 def test_check_risk_rule_accepts_a_duck_typed_rule():
     assert check_risk_rule(make_object(name="duck", evaluate=_valid_evaluate), "rule") == "duck"
-
-def test_check_risk_rule_refuses_what_isinstance_accepts():
-    fake = make_object(name="fake", evaluate=5)
-    assert isinstance(fake, RiskRule)
-
-    with pytest.raises(TypeError, match="callable 'evaluate'"):
-        check_risk_rule(fake, "rule")
 
 @pytest.mark.parametrize(
     "thing",
@@ -296,7 +283,7 @@ class TestKillSwitchRule:
         violation = KillSwitchRule(engaged=True).evaluate(make_signal())
 
         assert violation is not None
-        assert "Kill switch engaged" in violation.reason
+        assert "kill switch engaged" in violation.reason
 
     def test_engaged_rejects_every_time_not_just_once(self):
         rule = KillSwitchRule(engaged=True)

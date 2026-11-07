@@ -4,14 +4,13 @@ risk/domain/rules.py
 
 from decimal import Decimal
 
-from typing import Protocol, runtime_checkable
+from typing import Protocol
 
 from abc import abstractmethod
 
 from src.strategy.domain.events import SignalEvent
 from src.risk.domain.value import RuleViolation
 
-@runtime_checkable
 class RiskRule(Protocol):
     @property
     @abstractmethod
@@ -67,7 +66,7 @@ class MaxUnitSizeRule(RiskRule):
             raise TypeError(f"max_units must be a Decimal, got {type(max_units).__name__}.")
         if not max_units.is_finite():
             raise ValueError(f"max_units must be a finite number, got {max_units}.")
-        if max_units < 0:
+        if max_units <= 0:
             raise ValueError(f"max_units must be greater than 0, got {max_units}.")
         
         self._max_units = max_units
