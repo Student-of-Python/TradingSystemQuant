@@ -1,10 +1,11 @@
 '''
 src/strategy/domain/events.py
 '''
-from src.core import BaseEvent
 from dataclasses import dataclass
 from decimal import Decimal
-from enums import StrategyAction
+
+from src.core import BaseEvent
+from src.strategy.domain.enums import StrategyAction
 
 
 @dataclass(frozen=True)
@@ -19,7 +20,7 @@ class SignalEvent(BaseEvent):
     units: Decimal
     confidence: Decimal
     strategy_name: str
-
+    price: Decimal
 
 
 '''
