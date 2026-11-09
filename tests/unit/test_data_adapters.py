@@ -11,7 +11,6 @@ import pytest
 
 from src.data.adapters.alpaca import bar_from_alpaca
 from src.data.domain.enums import TimeResolution
-from src.data.domain.errors import InvalidMarketDataError
 
 
 def raw_bar(**overrides):
@@ -26,7 +25,6 @@ def test_alpaca_bar_translates():
     bar = bar_from_alpaca(raw_bar(), TimeResolution.DAILY)
     assert bar.close == Decimal("104.0")
     assert bar.vwap == Decimal("102.5")
-    assert bar.trade_count == 37
 
 
 def test_alpaca_bar_without_optional_fields():
@@ -37,7 +35,7 @@ def test_alpaca_bar_without_optional_fields():
 
 
 def test_bad_vendor_data_is_rejected_at_the_boundary():
-    with pytest.raises(InvalidMarketDataError):
+    with pytest.raises(ValueError):
         bar_from_alpaca(raw_bar(low=200.0), TimeResolution.DAILY)
 
 

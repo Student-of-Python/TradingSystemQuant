@@ -23,7 +23,7 @@ def bar_from_alpaca(raw: Any, resolution: TimeResolution) -> MarketBar:
         close=raw.close,
         volume=raw.volume,
         vwap=getattr(raw, "vwap", None),
-        trade_count=None if getattr(raw, "trade_count", None) is None else int(raw.trade_count),
+        trade_count=getattr(raw, "trade_count", None),
     )
 
 
