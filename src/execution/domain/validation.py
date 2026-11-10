@@ -37,3 +37,17 @@ def check_utc_datetime(value: object, field: str) -> None:
         raise TypeError(f"{field} must be a datetime, got {type(value).__name__}.")
     if value.utcoffset() != timedelta(0):
         raise ValueError(f"{field} must be timezone-aware UTC, got {value!r}.")
+
+
+def check_non_negative_decimal(value: object, field: str) -> None:
+    if not isinstance(value, Decimal):
+        raise TypeError(f"{field} must be a Decimal, got {type(value).__name__}.")
+    if not value.is_finite():
+        raise ValueError(f"{field} must be finite, got {value}.")
+    if value < 0:
+        raise ValueError(f"{field} must not be negative, got {value}.")
+
+
+def check_instance(value: object, cls: type, field: str) -> None:
+    if not isinstance(value, cls):
+        raise TypeError(f"{field} must be a {cls.__name__}, got {type(value).__name__}.")
