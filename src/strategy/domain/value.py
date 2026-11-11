@@ -1,19 +1,20 @@
 '''
 src/strategy/domain/value.py
 '''
-
-
 from dataclasses import dataclass
-from enums import StrategyAction
 from decimal import Decimal
+
+from src.strategy.domain.enums import StrategyAction
+
 
 @dataclass(frozen=True)
 class StrategyOutput:
     symbol: str
-    action: StrategyAction # BUY, SELL, or HOLD
-    units: Decimal #Decimal
-    confidence: Decimal #Also more decimal
+    action: StrategyAction
+    units: Decimal
+    confidence: Decimal
     strategy_name: str
+    price: Decimal
 
 
 
