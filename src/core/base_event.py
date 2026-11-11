@@ -11,18 +11,16 @@ import uuid
 class BaseEvent:
     '''Base event'''
 
-    _event_id: uuid.UUID = field(default_factory=uuid.uuid7, kw_only=True) #May need a pip install for uuid 7
-
-    @property
-    def created_at(self) -> datetime:
-        '''Returns time of creation'''
-        timestamp_ms = self._event_id.int >> 80
-        return datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
+    event_id: uuid.UUID = field(default_factory=uuid.uuid4, kw_only=True) #May need a pip install for uuid 7? It has time based tracking
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        kw_only=True,
+    )
 
     @property
     def event_tag(self) -> str:
         '''Returns id of event
 
-        returns format: {CLASSNAME}_{ID}"
+        returns format: {CLASSNAME}_{ID}
         '''
-        return f"{type(self).__name__}_{self._event_id}"
+        return f"{type(self).__name__}_{self.event_id}"

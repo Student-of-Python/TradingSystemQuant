@@ -10,7 +10,7 @@ from .base_event import BaseEvent
 class EventRouter:
     def __init__(self):
         self._queue: deque[BaseEvent] = deque()
-        self._registry: defaultdict[type[BaseEvent], set[Callable[..., None]]] = defaultdict(set)
+        self._registry: defaultdict[type[BaseEvent], dict[Callable, None]] = defaultdict(dict)
 
     @overload
     def subscribe[T: BaseEvent](self, event: type[T], contact: Callable[[T], None]) -> None:
@@ -27,7 +27,7 @@ class EventRouter:
         events = (event,) if isinstance(event, type) else event
 
         for e in events:
-            self._registry[e].add(contact)
+            self._registry[e][contact] = None
 
 
     def publish(self, *event: BaseEvent) -> None:
