@@ -1,15 +1,16 @@
-'''
-risk/domain/value.py
-'''
+"""Value objects used by the risk domain."""
 
 from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RuleViolation:
+    """Describe why a risk rule rejected a strategy signal."""
+
     rule_name: str
     reason: str
 
     def __post_init__(self) -> None:
+        """Validate that the violation identifies a rule and a non-empty reason."""
         if not isinstance(self.rule_name, str): # pyright: ignore[reportUnnecessaryIsInstance]
             raise TypeError(f"rule_name must be a string, got {type(self.rule_name).__name__}.")
         if not isinstance(self.reason, str): # pyright: ignore[reportUnnecessaryIsInstance]

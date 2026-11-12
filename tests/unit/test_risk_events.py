@@ -24,6 +24,7 @@ def make_signal() -> SignalEvent:
         units=Decimal("10"),
         confidence=Decimal("0.8"),
         strategy_name="test_strategy",
+        price=Decimal("150.00")
     )
 
 RULE = MaxUnitSizeRule(Decimal("100"))

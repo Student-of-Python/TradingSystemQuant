@@ -1,6 +1,4 @@
-'''
-risk/manager.py
-'''
+"""Coordinate risk-rule evaluation and publish risk decisions."""
 
 from collections.abc import Iterable
 from src.core.protocols import Subscribable
@@ -11,7 +9,18 @@ from src.risk.domain.value import RuleViolation
 from src.strategy.domain.events import SignalEvent
 
 class RiskManager(Subscribable):
+    """Evaluate incoming strategy signals against a configured set of risk rules."""
+
     def __init__(self, rules: Iterable[RiskRule]) -> None:
+        """Create a manager after validating and uniquely identifying its rules.
+
+        Args:
+            rules: The risk rules to apply to each incoming signal.
+
+        Raises:
+            ValueError: If no rules are supplied or rule names are duplicated.
+            TypeError: If a supplied object is not a valid risk rule.
+        """
         self._rules: tuple[RiskRule, ...] = tuple(rules)
         
         if not self._rules:
@@ -32,6 +41,18 @@ class RiskManager(Subscribable):
         self._router: EventRouter | None = None
         
     def register_subscriptions(self, router: EventRouter) -> None:
+        """Subscribe to signal events on an event router.
+
+        Registering with the same router more than once is harmless. Registering
+        with a different router after the first registration is rejected.
+
+        Args:
+            router: The event router that will deliver strategy signals.
+
+        Raises:
+            RuntimeError: If this manager is already registered with another
+                router.
+        """
         if self._router is router:
             return
         if self._router is not None:
@@ -42,6 +63,19 @@ class RiskManager(Subscribable):
         router.subscribe(SignalEvent, self._on_signal)
         
     def decide(self, signal: SignalEvent) -> RiskApprovedEvent | RiskRejectedEvent:
+        """Evaluate a signal and return an approval or a rejection event.
+
+        Every rule is evaluated independently. Exceptions raised by individual
+        rules and invalid rule return values are recorded as violations so one
+        faulty rule cannot prevent the remaining rules from running.
+
+        Args:
+            signal: The strategy signal to evaluate.
+
+        Returns:
+            A rejection containing all violations, or an approval containing
+            every rule that was checked.
+        """
         violations: list[RuleViolation] = []
 
         for rule, name in zip(self._rules, self._rule_names):
@@ -65,9 +99,10 @@ class RiskManager(Subscribable):
         return RiskApprovedEvent(signal=signal, rules_checked=self._rules)
 
     def _on_signal(self, signal: SignalEvent) -> None:
+        """Publish the decision for a received strategy signal."""
         router = self._router
 
         if router is None:
-            raise RuntimeError(f"RiskManager._on_signal called before register_subscriptions().")
+            raise RuntimeError("RiskManager._on_signal called before register_subscriptions().")
 
         router.publish(self.decide(signal))
