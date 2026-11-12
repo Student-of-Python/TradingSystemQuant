@@ -1,16 +1,13 @@
 '''
 src/strategy/base.py
 '''
-from typing import Protocol, Sequence, TypeAlias
+from typing import Protocol, Sequence
+
 from src.data.domain.events import MarketBarEvent
-from src.data.domain.value import MarketBar
 from src.strategy.domain.value import StrategyOutput
-from pandas import DataFrame
-
-HistoricalData: TypeAlias = pd.DataFrame | Sequence[MarketBar] #Will most likely have to stick with Dataframe because conversion cost between MarketBar and Dataframe is too expensive?
 
 
-class Strategy(Protocol): #We make this parent class instead?
+class Strategy(Protocol):
     '''
     Protocol for strategies
     '''
@@ -19,14 +16,13 @@ class Strategy(Protocol): #We make this parent class instead?
     def strategy_id(self) -> str:
         ...
 
-    def on_warmup(self, historical_bars: HistoricalData) -> None:
+    def on_warmup(self, historical_bars: Sequence[MarketBarEvent]) -> None:
+        # This is a sequence of bars and not a DataFrame because the Protocol must stay library-free accordign to the desgin.md file. 
+        # Pandas/numpy can still be used inside a concrete strategy, not in this contract. I think keeping it like this can handle any type of stratergy.
         '''Warms strategy up with historical data'''
         ...
+
 
     def on_bar(self, bar: MarketBarEvent) -> StrategyOutput | None:
         '''Strategy output based on a new market bar'''
         ...
-
-    #TODO: Do we need any other interface methods for Strategy?
-
-

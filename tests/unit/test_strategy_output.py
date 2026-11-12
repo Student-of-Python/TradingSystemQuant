@@ -1,34 +1,34 @@
-from src.core.base_event import Metric, MetricEvent, SignalEvent
-from src.strategy.domain.value import StrategyOutput
+from decimal import Decimal
 import unittest
-import pytest
+
+from src.strategy.domain.enums import StrategyAction
+from src.strategy.domain.events import SignalEvent
+from src.strategy.domain.value import StrategyOutput
 
 
-
-class SplitOutputTest(unittest.TestCase):
-    def test_split_copies_trade_and_metrics(self):
-        metrics = [Metric("rsi", 55.0), Metric("sharpe", 1.2)]
-        output = StrategyOutput("AAPL", "BUY", 10, 0.8, "momentum", metrics)
-
-        signal, metric = split_output(output)
-
-        self.assertEqual(signal, SignalEvent("AAPL", "BUY", 10, 0.8, "momentum"))
-        self.assertEqual(metric, MetricEvent("AAPL", "momentum", metrics))
-
-    def test_metrics_list_is_a_copy(self):
-        metrics = [Metric("rsi", 55.0)]
-        output = StrategyOutput("AAPL", "HOLD", 0, 0.0, "momentum", metrics)
-
-        signal, metric = split_output(output)
-        metrics.append(Metric("sharpe", 1.2))
-
-        self.assertEqual(metric.metrics, [Metric("rsi", 55.0)])
+class StrategyOutputTest(unittest.TestCase):
+    def test_signal_has_price(self):
+        signal = SignalEvent(
+            "AAPL",
+            StrategyAction.BUY,
+            Decimal("10"),
+            Decimal("0.8"),
+            "momentum",
+            Decimal("150.25"),
+        )
+        self.assertEqual(signal.price, Decimal("150.25"))
 
     def test_output_is_frozen(self):
-        output = StrategyOutput("AAPL", "SELL", 2, 0.4, "momentum", [])
-
+        output = StrategyOutput(
+            "AAPL",
+            StrategyAction.SELL,
+            Decimal("2"),
+            Decimal("0.4"),
+            "momentum",
+            Decimal("100"),
+        )
         with self.assertRaises(AttributeError):
-            output.action = "BUY"
+            output.action = StrategyAction.BUY
 
 
 if __name__ == "__main__":
