@@ -17,6 +17,7 @@ from src.execution.domain.fill import Fill
 from src.execution.domain.order import Order
 from src.execution.ports import (
     BrokerErrorCode,
+    BrokerOrderRecord,
     BrokerOrderUpdate,
     BrokerPort,
     broker_error,
@@ -57,7 +58,9 @@ def status(broker: FakeBroker, broker_order_id: str) -> BrokerOrderUpdate:
 def test_satisfies_the_broker_port():
     port: BrokerPort = make_broker()  # checked by the type checker
 
-    assert all(callable(getattr(port, name)) for name in ("submit_order", "cancel_order", "get_order_status"))
+    assert all(callable(getattr(port, name)) for name in (
+        "submit_order", "cancel_order", "get_order_status", "find_order", "list_open_orders",
+    ))
 
 
 # --- BrokerOrderUpdate ---
@@ -280,3 +283,118 @@ def test_unknown_broker_id_is_not_found(call):
 def test_bad_configuration_is_refused(kwargs, error):
     with pytest.raises(error):
         make_broker(**kwargs)
+
+
+# ---------------------------------------------------------------- find_order / list_open_orders
+
+
+def test_find_order_by_client_id_does_not_trigger_fills():
+    broker = make_broker()
+    order = make_order()
+    broker_id = submit(broker, order)
+
+    result = broker.find_order(order.client_order_id)
+
+    assert result.is_success
+    assert result.value == BrokerOrderUpdate(broker_order_id=broker_id, status=OrderStatus.SUBMITTED)
+    assert broker.find_requests == [order.client_order_id]
+
+
+def test_find_order_unknown_client_id_is_not_found():
+    result = make_broker().find_order(uuid.UUID(int=99))
+
+    assert broker_error_code(result.error) is BrokerErrorCode.ORDER_NOT_FOUND
+
+
+def test_find_order_while_disconnected_is_a_connection_failure():
+    broker = make_broker()
+    broker.disconnect()
+
+    result = broker.find_order(uuid.UUID(int=1))
+
+    assert result.error is not None and result.error.code is ErrorCode.CONNECTION_FAILURE
+
+
+def test_dropped_ack_keeps_the_order_at_the_broker():
+    broker = make_broker()
+    order = make_order()
+    broker.drop_next_submit_ack()
+
+    lost = broker.submit_order(order)
+    found = broker.find_order(order.client_order_id)
+
+    assert lost.error is not None and lost.error.code is ErrorCode.CONNECTION_FAILURE
+    assert found.is_success and found.value is not None
+    assert found.value.status is OrderStatus.SUBMITTED
+    assert submit(broker, make_order(n=2)) == "FAKE-2"  # only the next ack is dropped
+
+
+def test_list_open_orders_returns_only_open_orders_with_their_details():
+    broker = make_broker(fill_mode=FillMode.MANUAL)
+    open_order, filled_order, canceled_order = make_order(n=1), make_order(n=2), make_order(n=3)
+    open_id = submit(broker, open_order)
+    broker.fill(open_id, Decimal("4"))
+    broker.fill(submit(broker, filled_order), Decimal("10"))
+    broker.cancel_order(submit(broker, canceled_order))
+
+    result = broker.list_open_orders()
+
+    assert result.is_success and result.value is not None
+    (record,) = result.value
+    assert record.client_order_id == open_order.client_order_id
+    assert (record.symbol, record.side, record.quantity, record.created_at) == ("AAPL", OrderSide.BUY, Decimal("10"), NOW)
+    assert record.update.broker_order_id == open_id
+    assert record.update.status is OrderStatus.PARTIALLY_FILLED
+    assert [f.quantity for f in record.update.fills] == [Decimal("4")]
+
+
+def test_list_open_orders_while_disconnected_is_a_connection_failure():
+    broker = make_broker()
+    broker.disconnect()
+
+    result = broker.list_open_orders()
+
+    assert result.error is not None and result.error.code is ErrorCode.CONNECTION_FAILURE
+
+
+# ---------------------------------------------------------------- BrokerOrderRecord
+
+
+def make_record(**overrides: object) -> BrokerOrderRecord:
+    fields: dict[str, object] = dict(
+        client_order_id=uuid.UUID(int=1),
+        symbol="AAPL",
+        side=OrderSide.BUY,
+        quantity=Decimal("10"),
+        created_at=NOW,
+        update=BrokerOrderUpdate(broker_order_id="B-1", status=OrderStatus.SUBMITTED),
+    )
+    fields.update(overrides)
+    return BrokerOrderRecord(**fields)  # pyright: ignore[reportArgumentType]
+
+
+def test_record_accepts_valid_fields():
+    assert make_record().symbol == "AAPL"
+
+
+@pytest.mark.parametrize("field, bad, error", [
+    ("client_order_id", "1", TypeError),
+    ("symbol", " ", ValueError),
+    ("side", "BUY", TypeError),
+    ("quantity", Decimal("0"), ValueError),
+    ("quantity", 10, TypeError),
+    ("created_at", datetime(2026, 11, 10), ValueError),
+    ("update", None, TypeError),
+])
+def test_record_refuses_bad_fields(field, bad, error):
+    with pytest.raises(error):
+        make_record(**{field: bad})
+
+
+def test_record_refuses_fills_of_another_order():
+    foreign = Fill(fill_id="F-1", client_order_id=uuid.UUID(int=2), price=Decimal("1"),
+                   quantity=Decimal("1"), timestamp=NOW)
+
+    with pytest.raises(ValueError, match="belongs to order"):
+        make_record(update=BrokerOrderUpdate(broker_order_id="B-1", status=OrderStatus.PARTIALLY_FILLED,
+                                             fills=(foreign,)))

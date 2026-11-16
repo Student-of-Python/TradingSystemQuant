@@ -10,15 +10,24 @@ back as a failed Result, because the router silently swallows exceptions from ha
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Protocol
 
 from src.core.results import Error, ErrorCode, Result
-from src.execution.domain.enums import OrderStatus
+from src.execution.domain.enums import OrderSide, OrderStatus
 from src.execution.domain.fill import Fill
 from src.execution.domain.order import Order
-from src.execution.domain.validation import check_instance, check_non_blank_str
+from src.execution.domain.validation import (
+    check_instance,
+    check_non_blank_str,
+    check_positive_decimal,
+    check_utc_datetime,
+    check_uuid,
+)
 
 type BrokerOrderId = str
 
@@ -78,6 +87,38 @@ class BrokerOrderUpdate:
             check_non_blank_str(self.reason, "reason")
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class BrokerOrderRecord:
+    '''
+    An order as the broker holds it, with everything needed to rebuild our Order after a
+    restart (startup reconciliation).
+
+    client_order_id (UUID): Our id for the order, as sent with the submit.
+    symbol (str): Ticker.
+    side (OrderSide): BUY or SELL.
+    quantity (Decimal): Units requested.
+    created_at (datetime): When the broker received it, UTC.
+    update (BrokerOrderUpdate): Its current status and fills.
+    '''
+    client_order_id: uuid.UUID
+    symbol: str
+    side: OrderSide
+    quantity: Decimal
+    created_at: datetime
+    update: BrokerOrderUpdate
+
+    def __post_init__(self) -> None:
+        check_uuid(self.client_order_id, "client_order_id")
+        check_non_blank_str(self.symbol, "symbol")
+        check_instance(self.side, OrderSide, "side")
+        check_positive_decimal(self.quantity, "quantity")
+        check_utc_datetime(self.created_at, "created_at")
+        check_instance(self.update, BrokerOrderUpdate, "update")
+        for i, fill in enumerate(self.update.fills):
+            if fill.client_order_id != self.client_order_id:
+                raise ValueError(f"update.fills[{i}] belongs to order {fill.client_order_id}, not {self.client_order_id}.")
+
+
 class BrokerPort(Protocol):
     def submit_order(self, order: Order) -> Result[BrokerOrderId]:
         '''Sends the order (with its client_order_id). Success value: the broker's order id.'''
@@ -90,4 +131,15 @@ class BrokerPort(Protocol):
 
     def get_order_status(self, broker_order_id: BrokerOrderId) -> Result[BrokerOrderUpdate]:
         '''Current status and every fill so far.'''
+        ...
+
+    def find_order(self, client_order_id: uuid.UUID) -> Result[BrokerOrderUpdate]:
+        '''
+        Looks an order up by OUR id. Used when a submit's answer was lost (connection failure):
+        success means the broker did receive it; ORDER_NOT_FOUND means it never arrived.
+        '''
+        ...
+
+    def list_open_orders(self) -> Result[tuple[BrokerOrderRecord, ...]]:
+        '''Every order the broker still has open, for startup reconciliation.'''
         ...

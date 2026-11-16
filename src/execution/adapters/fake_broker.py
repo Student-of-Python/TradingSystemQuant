@@ -13,6 +13,8 @@ Failures:
   fail_submits_with(error): every submit_order fails with `error` until cleared (None).
   disconnect() / reconnect(): every call fails with CONNECTION_FAILURE while disconnected.
   A second submit with the same client_order_id fails with DUPLICATE_ORDER (like Alpaca).
+  drop_next_submit_ack(): the next submit reaches the broker (the order exists) but the
+    answer is lost, so the caller sees CONNECTION_FAILURE. Use find_order to recover it.
 
 Like a real broker, get_order_status reports every fill so far, not just the new ones.
 '''
@@ -27,10 +29,16 @@ from decimal import Decimal
 from enum import StrEnum
 
 from src.core.results import Error, Result
-from src.execution.domain.enums import OrderStatus
+from src.execution.domain.enums import OrderSide, OrderStatus
 from src.execution.domain.fill import Fill
 from src.execution.domain.order import ALLOWED_TRANSITIONS, Order
-from src.execution.ports import BrokerErrorCode, BrokerOrderId, BrokerOrderUpdate, broker_error
+from src.execution.ports import (
+    BrokerErrorCode,
+    BrokerOrderId,
+    BrokerOrderRecord,
+    BrokerOrderUpdate,
+    broker_error,
+)
 
 
 class FillMode(StrEnum):
@@ -42,7 +50,10 @@ class FillMode(StrEnum):
 @dataclass(slots=True)
 class _FakeOrder:
     client_order_id: uuid.UUID
+    symbol: str
+    side: OrderSide
     quantity: Decimal
+    created_at: datetime
     status: OrderStatus = OrderStatus.SUBMITTED
     fills: list[Fill] = field(default_factory=list)
     reason: str | None = None
@@ -82,18 +93,24 @@ class FakeBroker:
         self._orders: dict[BrokerOrderId, _FakeOrder] = {}
         self._by_client_id: dict[uuid.UUID, BrokerOrderId] = {}
         self._submit_error: Error | None = None
+        self._drop_next_ack = False
         self._connected = True
 
         # Call log, for assertions in tests.
         self.submitted: list[Order] = []
         self.cancel_requests: list[BrokerOrderId] = []
         self.status_requests: list[BrokerOrderId] = []
+        self.find_requests: list[uuid.UUID] = []
 
     # ------------------------------------------------------------------ test controls
 
     def fail_submits_with(self, error: Error | None) -> None:
         '''Every following submit fails with `error`. Pass None to go back to normal.'''
         self._submit_error = error
+
+    def drop_next_submit_ack(self) -> None:
+        '''The next submit is accepted, but its answer is lost (CONNECTION_FAILURE).'''
+        self._drop_next_ack = True
 
     def disconnect(self) -> None:
         self._connected = False
@@ -132,8 +149,17 @@ class FakeBroker:
             ))
 
         broker_order_id = f"FAKE-{len(self._orders) + 1}"
-        self._orders[broker_order_id] = _FakeOrder(client_order_id=order.client_order_id, quantity=order.quantity)
+        self._orders[broker_order_id] = _FakeOrder(
+            client_order_id=order.client_order_id,
+            symbol=order.symbol,
+            side=order.side,
+            quantity=order.quantity,
+            created_at=self._clock(),
+        )
         self._by_client_id[order.client_order_id] = broker_order_id
+        if self._drop_next_ack:
+            self._drop_next_ack = False
+            return self._connection_failure()
         return Result.successful(broker_order_id)
 
     def cancel_order(self, broker_order_id: BrokerOrderId) -> Result[None]:
@@ -162,14 +188,46 @@ class FakeBroker:
         if fake.is_open:
             self._auto_fill(broker_order_id, fake)
 
-        return Result.successful(BrokerOrderUpdate(
+        return Result.successful(self._update(broker_order_id, fake))
+
+    def find_order(self, client_order_id: uuid.UUID) -> Result[BrokerOrderUpdate]:
+        '''Lookup by our id. Unlike get_order_status, it never triggers automatic fills.'''
+        self.find_requests.append(client_order_id)
+        if not self._connected:
+            return self._connection_failure()
+        broker_order_id = self._by_client_id.get(client_order_id)
+        if broker_order_id is None:
+            return Result.failure(broker_error(
+                BrokerErrorCode.ORDER_NOT_FOUND, f"No order with client_order_id {client_order_id}."
+            ))
+        return Result.successful(self._update(broker_order_id, self._orders[broker_order_id]))
+
+    def list_open_orders(self) -> Result[tuple[BrokerOrderRecord, ...]]:
+        if not self._connected:
+            return self._connection_failure()
+        return Result.successful(tuple(
+            BrokerOrderRecord(
+                client_order_id=fake.client_order_id,
+                symbol=fake.symbol,
+                side=fake.side,
+                quantity=fake.quantity,
+                created_at=fake.created_at,
+                update=self._update(broker_order_id, fake),
+            )
+            for broker_order_id, fake in self._orders.items()
+            if fake.is_open
+        ))
+
+    # ------------------------------------------------------------------ internals
+
+    @staticmethod
+    def _update(broker_order_id: BrokerOrderId, fake: _FakeOrder) -> BrokerOrderUpdate:
+        return BrokerOrderUpdate(
             broker_order_id=broker_order_id,
             status=fake.status,
             fills=tuple(fake.fills),
             reason=fake.reason,
-        ))
-
-    # ------------------------------------------------------------------ internals
+        )
 
     def _auto_fill(self, broker_order_id: BrokerOrderId, fake: _FakeOrder) -> None:
         remaining = fake.quantity - fake.filled
