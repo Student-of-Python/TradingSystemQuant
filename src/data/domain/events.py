@@ -8,3 +8,8 @@ from src.data.domain.value import MarketBar
 @dataclass(frozen=True)
 class MarketBarEvent(BaseEvent):
     bar: MarketBar
+
+
+@dataclass(frozen=True)
+class HistoricalBarsEvent(BaseEvent):
+    bars: tuple[MarketBar, ...]

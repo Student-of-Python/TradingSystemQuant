@@ -9,7 +9,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.data.adapters.alpaca import bar_from_alpaca
+pytest.importorskip("alpaca")
+
+from src.data.adapters.alpaca import AlpacaDataFeed
 from src.data.domain.enums import TimeResolution
 
 
@@ -22,7 +24,7 @@ def raw_bar(**overrides):
 
 
 def test_alpaca_bar_translates():
-    bar = bar_from_alpaca(raw_bar(), TimeResolution.DAILY)
+    bar = AlpacaDataFeed.bar_from_alpaca(raw_bar(), TimeResolution.DAILY)
     assert bar.close == Decimal("104.0")
     assert bar.vwap == Decimal("102.5")
 
@@ -30,13 +32,13 @@ def test_alpaca_bar_translates():
 def test_alpaca_bar_without_optional_fields():
     raw = raw_bar()
     del raw.vwap, raw.trade_count
-    bar = bar_from_alpaca(raw, TimeResolution.MINUTE)
+    bar = AlpacaDataFeed.bar_from_alpaca(raw, TimeResolution.MINUTE)
     assert bar.vwap is None and bar.trade_count is None
 
 
 def test_bad_vendor_data_is_rejected_at_the_boundary():
     with pytest.raises(ValueError):
-        bar_from_alpaca(raw_bar(low=200.0), TimeResolution.DAILY)
+        AlpacaDataFeed.bar_from_alpaca(raw_bar(low=200.0), TimeResolution.DAILY)
 
 
 def test_data_domain_is_pure_stdlib():

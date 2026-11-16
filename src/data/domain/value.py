@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
+
 from src.data.domain.enums import TimeResolution
 
 
@@ -35,14 +36,27 @@ class MarketBar:
     def __post_init__(self):
         if not self.symbol:
             raise ValueError("symbol is missing")
+        if not isinstance(self.timestamp, datetime):
+            raise TypeError("timestamp must be a datetime")
         if self.timestamp.tzinfo is None:
             raise ValueError("timestamp must be timezone-aware")
-        # frozen, so normalize with object.__setattr__
-        object.__setattr__(self, "timestamp", self.timestamp.astimezone(timezone.utc))
+        if self.timestamp.utcoffset() != timezone.utc.utcoffset(self.timestamp):
+            raise ValueError("timestamp must be UTC")
+        if not isinstance(self.resolution, TimeResolution):
+            raise TypeError("resolution must be a TimeResolution")
         for name in ("open", "high", "low", "close", "volume"):
-            object.__setattr__(self, name, _to_decimal(getattr(self, name), name))
+            value = getattr(self, name)
+            if not isinstance(value, Decimal):
+                raise TypeError(f"{name} must be a Decimal")
+            if not value.is_finite():
+                raise ValueError(f"{name} must be finite")
         if self.vwap is not None:
-            object.__setattr__(self, "vwap", _to_decimal(self.vwap, "vwap"))
+            if not isinstance(self.vwap, Decimal):
+                raise TypeError("vwap must be a Decimal")
+            if not self.vwap.is_finite():
+                raise ValueError("vwap must be finite")
+        if self.trade_count is not None and not isinstance(self.trade_count, int):
+            raise TypeError("trade_count must be an int")
 
         if min(self.open, self.high, self.low, self.close) <= 0:
             raise ValueError("prices must be positive")
@@ -60,17 +74,22 @@ class MarketBar:
             timestamp = data["timestamp"]
             if isinstance(timestamp, str):
                 timestamp = datetime.fromisoformat(timestamp)
+            if not isinstance(timestamp, datetime):
+                raise ValueError("timestamp must be a datetime")
+            if timestamp.tzinfo is not None:
+                timestamp = timestamp.astimezone(timezone.utc)
+            trade_count = data.get("trade_count")
             return cls(
                 symbol=str(data["symbol"]),
                 timestamp=timestamp,
                 resolution=TimeResolution(data["resolution"]),
-                open=data["open"],
-                high=data["high"],
-                low=data["low"],
-                close=data["close"],
-                volume=data["volume"],
-                vwap=data.get("vwap"),
-                trade_count=data.get("trade_count"),
+                open=_to_decimal(data["open"], "open"),
+                high=_to_decimal(data["high"], "high"),
+                low=_to_decimal(data["low"], "low"),
+                close=_to_decimal(data["close"], "close"),
+                volume=_to_decimal(data["volume"], "volume"),
+                vwap=_to_decimal(data["vwap"], "vwap") if data.get("vwap") is not None else None,
+                trade_count=int(trade_count) if trade_count is not None else None,
             )
         except KeyError as e:
             raise ValueError(f"missing field {e}") from None
