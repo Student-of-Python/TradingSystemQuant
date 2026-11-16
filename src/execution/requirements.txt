@@ -1,0 +1,3 @@
+# Execution context dependencies (on top of the team's Python 3.12+ / pytest setup).
+# Only adapters/alpaca_broker.py imports this; the domain, the manager and FakeBroker do not.
+alpaca-py>=0.45,<1
