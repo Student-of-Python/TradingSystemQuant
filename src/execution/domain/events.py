@@ -8,6 +8,8 @@ OrderSubmittedEvent: the broker acknowledged the order.
 FillEvent: one broker execution was applied to the order.
 OrderRejectedEvent: the order was refused (by execution itself or by the broker).
 OrderCanceledEvent: the broker confirmed the order is canceled.
+OrderCancelRequestedEvent: execution asked the broker to cancel (timeout, kill switch, manual).
+    Only a request: OrderCanceledEvent (or fills) follows once the broker answers.
 '''
 
 from __future__ import annotations
@@ -80,6 +82,7 @@ class FillEvent(BaseEvent):
     filled_quantity (Decimal): Total units filled so far, including this fill.
     remaining_quantity (Decimal): Units still open after this fill (0 when FILLED).
     avg_fill_price (Decimal): Quantity-weighted average price of all fills so far.
+    expected_price (Decimal | None): Price the strategy saw when it signaled, if known.
     '''
     fill: Fill
     symbol: str
@@ -88,6 +91,7 @@ class FillEvent(BaseEvent):
     filled_quantity: Decimal
     remaining_quantity: Decimal
     avg_fill_price: Decimal
+    expected_price: Decimal | None = None
 
     def __post_init__(self) -> None:
         check_instance(self.fill, Fill, "fill")
@@ -99,6 +103,8 @@ class FillEvent(BaseEvent):
         check_positive_decimal(self.filled_quantity, "filled_quantity")
         check_non_negative_decimal(self.remaining_quantity, "remaining_quantity")
         check_positive_decimal(self.avg_fill_price, "avg_fill_price")
+        if self.expected_price is not None:
+            check_positive_decimal(self.expected_price, "expected_price")
         if self.filled_quantity < self.fill.quantity:
             raise ValueError(
                 f"filled_quantity ({self.filled_quantity}) cannot be less than the fill's quantity ({self.fill.quantity})."
@@ -111,6 +117,25 @@ class FillEvent(BaseEvent):
     @property
     def client_order_id(self) -> uuid.UUID:
         return self.fill.client_order_id
+
+    @property
+    def slippage(self) -> Decimal | None:
+        '''
+        Cost per unit of the average fill vs. the expected price: positive = worse than expected
+        (paid more on a BUY, received less on a SELL), negative = better. None if no expected price.
+        '''
+        if self.expected_price is None:
+            return None
+        diff = self.avg_fill_price - self.expected_price
+        return diff if self.side is OrderSide.BUY else -diff
+
+    @property
+    def slippage_bps(self) -> Decimal | None:
+        '''slippage in basis points of the expected price (1 bp = 0.01%).'''
+        slippage = self.slippage
+        if slippage is None or self.expected_price is None:
+            return None
+        return slippage / self.expected_price * Decimal("10000")
 
     @classmethod
     def from_order(cls, order: Order, fill: Fill) -> FillEvent:
@@ -127,6 +152,7 @@ class FillEvent(BaseEvent):
             filled_quantity=order.filled_quantity,
             remaining_quantity=order.remaining_quantity,
             avg_fill_price=avg,
+            expected_price=order.expected_price,
         )
 
 
@@ -183,3 +209,30 @@ class OrderCanceledEvent(BaseEvent):
             symbol=order.symbol,
             filled_quantity=order.filled_quantity,
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OrderCancelRequestedEvent(BaseEvent):
+    '''
+    client_order_id (UUID): Our id for the order.
+    broker_order_id (str): The broker's id for the order.
+    symbol (str): Ticker.
+    reason (str): Why execution asked for the cancel (timeout, kill switch, ...).
+    '''
+    client_order_id: uuid.UUID
+    broker_order_id: str
+    symbol: str
+    reason: str
+
+    def __post_init__(self) -> None:
+        check_uuid(self.client_order_id, "client_order_id")
+        check_non_blank_str(self.broker_order_id, "broker_order_id")
+        check_non_blank_str(self.symbol, "symbol")
+        check_non_blank_str(self.reason, "reason")
+
+    @classmethod
+    def from_order(cls, order: Order, reason: str) -> OrderCancelRequestedEvent:
+        if order.broker_order_id is None:
+            raise ValueError(f"Order {order.client_order_id} has no broker_order_id; the broker cannot cancel it.")
+        return cls(client_order_id=order.client_order_id, broker_order_id=order.broker_order_id,
+                   symbol=order.symbol, reason=reason)

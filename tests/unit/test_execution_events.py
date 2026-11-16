@@ -12,6 +12,7 @@ import pytest
 from src.core.base_event import BaseEvent
 from src.execution.domain.enums import OrderSide, OrderStatus, OrderType
 from src.execution.domain.events import (
+    OrderCancelRequestedEvent,
     FillEvent,
     OrderCanceledEvent,
     OrderRejectedEvent,
@@ -89,8 +90,19 @@ def canceled(**overrides: object) -> OrderCanceledEvent:
     return OrderCanceledEvent(**kwargs)  # pyright: ignore[reportArgumentType]
 
 
-FACTORIES = [submitted, filled, rejected, canceled]
-IDS = ["submitted", "fill", "rejected", "canceled"]
+def cancel_requested(**overrides: object) -> OrderCancelRequestedEvent:
+    kwargs: dict[str, object] = {
+        "client_order_id": ORDER_ID,
+        "broker_order_id": "B-1",
+        "symbol": "AAPL",
+        "reason": "timeout",
+    }
+    kwargs.update(overrides)
+    return OrderCancelRequestedEvent(**kwargs)  # pyright: ignore[reportArgumentType]
+
+
+FACTORIES = [submitted, filled, rejected, canceled, cancel_requested]
+IDS = ["submitted", "fill", "rejected", "canceled", "cancel_requested"]
 
 
 # --- Shared behavior ---
@@ -285,3 +297,71 @@ def test_canceled_from_order_that_is_not_canceled_is_refused():
 
     with pytest.raises(ValueError, match="not CANCELED"):
         OrderCanceledEvent.from_order(order)
+
+
+# --- OrderCancelRequestedEvent ---
+
+@pytest.mark.parametrize("field, bad, error", [
+    ("client_order_id", str(ORDER_ID), TypeError),
+    ("broker_order_id", " ", ValueError),
+    ("reason", "", ValueError),
+    ("reason", None, TypeError),
+])
+def test_cancel_requested_refuses_bad_fields(field, bad, error):
+    with pytest.raises(error):
+        cancel_requested(**{field: bad})
+
+
+def test_cancel_requested_from_order_copies_the_order():
+    order = make_order()
+    order.mark_submitted("B-7")
+
+    event = OrderCancelRequestedEvent.from_order(order, "kill switch")
+
+    assert (event.client_order_id, event.broker_order_id, event.symbol, event.reason) == (
+        ORDER_ID, "B-7", "AAPL", "kill switch")
+
+
+def test_cancel_requested_from_unsubmitted_order_is_refused():
+    with pytest.raises(ValueError, match="no broker_order_id"):
+        OrderCancelRequestedEvent.from_order(make_order(), "timeout")
+
+
+# --- Slippage ---
+
+def test_fill_without_expected_price_has_no_slippage():
+    event = filled()
+
+    assert event.expected_price is None
+    assert event.slippage is None and event.slippage_bps is None
+
+
+@pytest.mark.parametrize("side, avg, expected, slippage, bps", [
+    (OrderSide.BUY, "101", "100", "1", "100"),     # paid more: worse
+    (OrderSide.BUY, "99.5", "100", "-0.5", "-50"),  # paid less: better
+    (OrderSide.SELL, "99", "100", "1", "100"),      # received less: worse
+    (OrderSide.SELL, "100.25", "100", "-0.25", "-25"),
+])
+def test_slippage_is_positive_when_worse_than_expected(side, avg, expected, slippage, bps):
+    event = filled(side=side, avg_fill_price=Decimal(avg), expected_price=Decimal(expected))
+
+    assert event.slippage == Decimal(slippage)
+    assert event.slippage_bps == Decimal(bps)
+
+
+@pytest.mark.parametrize("bad, error", [(Decimal("0"), ValueError), (100, TypeError), (Decimal("NaN"), ValueError)])
+def test_fill_refuses_bad_expected_price(bad, error):
+    with pytest.raises(error):
+        filled(expected_price=bad)
+
+
+def test_fill_from_order_carries_the_orders_expected_price():
+    order = Order(client_order_id=ORDER_ID, symbol="AAPL", side=OrderSide.BUY, quantity=Decimal("10"),
+                  created_at=NOW, expected_price=Decimal("99"))
+    order.mark_submitted("B-1")
+    fill = make_fill()
+    order.apply_fill(fill)
+
+    event = FillEvent.from_order(order, fill)
+
+    assert event.expected_price == Decimal("99") and event.slippage == Decimal("1")

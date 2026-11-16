@@ -5,9 +5,10 @@ ExecutionManager with the FakeBroker, a real EventRouter, and real RiskApprovedE
 '''
 
 import importlib
+from dataclasses import dataclass
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -26,6 +27,7 @@ from src.execution.domain.enums import OrderSide, OrderStatus
 from src.execution.domain.events import (
     FillEvent,
     OrderCanceledEvent,
+    OrderCancelRequestedEvent,
     OrderRejectedEvent,
     OrderSubmittedEvent,
 )
@@ -40,7 +42,7 @@ from src.strategy.domain.events import SignalEvent
 
 NOW = datetime(2026, 11, 10, 14, 30, tzinfo=timezone.utc)
 RULE = MaxUnitSizeRule(Decimal("100"))
-EXECUTION_EVENTS = (OrderSubmittedEvent, FillEvent, OrderRejectedEvent, OrderCanceledEvent)
+EXECUTION_EVENTS = (OrderSubmittedEvent, FillEvent, OrderRejectedEvent, OrderCanceledEvent, OrderCancelRequestedEvent)
 
 
 def make_signal(action: StrategyAction = StrategyAction.BUY, units: object = Decimal("10"),
@@ -53,13 +55,28 @@ def approve(signal: SignalEvent | None = None) -> RiskApprovedEvent:
     return RiskApprovedEvent(signal=signal or make_signal(), rules_checked=(RULE,))
 
 
+class Clock:
+    '''A clock tests can move forward.'''
+
+    def __init__(self) -> None:
+        self.now = NOW
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, **kwargs: float) -> None:
+        self.now += timedelta(**kwargs)
+
+
 class Harness:
     '''Router + manager + fake broker, recording every execution event published.'''
 
-    def __init__(self, broker: object | None = None, **broker_kwargs: object) -> None:
-        self.broker = broker or FakeBroker(clock=lambda: NOW, **broker_kwargs)  # pyright: ignore[reportArgumentType]
+    def __init__(self, broker: object | None = None, *, manager_kwargs: dict[str, object] | None = None,
+                 **broker_kwargs: object) -> None:
+        self.clock = Clock()
+        self.broker = broker or FakeBroker(clock=self.clock, **broker_kwargs)  # pyright: ignore[reportArgumentType]
         self.router = EventRouter()
-        self.manager = ExecutionManager(self.broker, clock=lambda: NOW)  # pyright: ignore[reportArgumentType]
+        self.manager = ExecutionManager(self.broker, clock=self.clock, **(manager_kwargs or {}))  # pyright: ignore[reportArgumentType]
         self.manager.register_subscriptions(self.router)
         self.published: list[BaseEvent] = []
         self.router.subscribe(EXECUTION_EVENTS, self.published.append)
@@ -222,15 +239,100 @@ def test_broker_rejection_becomes_order_rejected_event():
     assert h.manager.orders[event.client_order_id].status is OrderStatus.REJECTED
 
 
-def test_connection_failure_on_submit_becomes_order_rejected_event():
+# --- In-doubt submits (connection lost during submit) ---
+
+def test_connection_failure_on_submit_leaves_the_order_in_doubt_without_events():
     h = Harness()
     h.broker.disconnect()
+    signal = make_signal()
 
+    h.send(approve(signal))
+
+    assert h.published == []
+    order = h.manager.orders[make_client_order_id(signal.event_id)]
+    assert order.status is OrderStatus.PENDING_SUBMIT
+    assert h.manager.in_doubt_orders == (order,)
+    assert h.manager.open_orders == ()
+
+
+def test_in_doubt_order_the_broker_never_received_is_rejected_on_poll():
+    h = Harness()
+    h.broker.disconnect()
     h.send(approve())
+    h.broker.reconnect()
+
+    h.poll()
 
     (event,) = h.published
-    assert isinstance(event, OrderRejectedEvent)
-    assert event.reason.startswith("CONNECTION_FAILURE")
+    assert isinstance(event, OrderRejectedEvent) and "never received" in event.reason
+    assert h.manager.in_doubt_orders == ()
+    assert len(h.broker.submitted) == 1  # never re-submitted
+
+
+def test_in_doubt_order_the_broker_did_receive_is_submitted_then_filled():
+    h = Harness(fill_mode=FillMode.MANUAL)
+    h.broker.drop_next_submit_ack()
+    h.send(approve())
+    assert h.published == []
+
+    h.poll()
+    h.broker.fill("FAKE-1", Decimal("10"))
+    h.poll()
+
+    assert [type(e) for e in h.published] == [OrderSubmittedEvent, FillEvent]
+    assert h.of_type(OrderSubmittedEvent)[0].broker_order_id == "FAKE-1"
+    assert len(h.broker.submitted) == 1
+
+
+def test_found_in_doubt_order_applies_fills_it_already_has():
+    h = Harness(fill_mode=FillMode.MANUAL)
+    h.broker.drop_next_submit_ack()
+    h.send(approve())
+    h.broker.fill("FAKE-1", Decimal("4"))
+
+    h.poll()
+
+    assert [type(e) for e in h.published] == [OrderSubmittedEvent, FillEvent]
+
+
+def test_in_doubt_order_is_retried_while_the_broker_is_unreachable():
+    h = Harness()
+    h.broker.disconnect()
+    h.send(approve())
+
+    h.poll()
+    h.poll()
+
+    assert h.published == []
+    assert len(h.broker.find_requests) == 2
+    assert len(h.manager.in_doubt_orders) == 1
+
+
+def test_in_doubt_order_is_rejected_after_the_in_doubt_timeout(caplog):
+    h = Harness(manager_kwargs={"in_doubt_timeout": timedelta(minutes=1)})
+    h.broker.disconnect()
+    h.send(approve())
+    h.poll()
+    h.clock.advance(minutes=1)
+
+    with caplog.at_level("ERROR"):
+        h.poll()
+
+    (event,) = h.published
+    assert isinstance(event, OrderRejectedEvent) and "unknown after" in event.reason
+    assert "check it by hand" in caplog.text
+
+
+def test_approval_again_while_in_doubt_does_not_resubmit():
+    h = Harness()
+    signal = make_signal()
+    h.broker.disconnect()
+    h.send(approve(signal))
+    h.broker.reconnect()
+
+    h.send(approve(signal))
+
+    assert len(h.broker.submitted) == 1
 
 
 class RaisingBroker(FakeBroker):
@@ -421,3 +523,257 @@ def test_orders_view_is_read_only():
 
     with pytest.raises(TypeError):
         h.manager.orders[uuid.uuid4()] = None  # pyright: ignore[reportIndexIssue]
+
+
+# --- Cancels (manual and kill switch) ---
+
+def test_cancel_order_requests_once_then_reports_the_broker_cancel():
+    h = Harness(fill_mode=FillMode.MANUAL)
+    h.send(approve())
+    (submitted,) = h.of_type(OrderSubmittedEvent)
+
+    h.manager.cancel_order(submitted.client_order_id, "manual")
+    h.manager.cancel_order(submitted.client_order_id, "manual again")
+    h.drain()
+    h.poll()
+
+    (requested,) = h.of_type(OrderCancelRequestedEvent)
+    assert (requested.client_order_id, requested.broker_order_id, requested.reason) == (
+        submitted.client_order_id, "FAKE-1", "manual")
+    assert h.broker.cancel_requests == ["FAKE-1"]
+    assert len(h.of_type(OrderCanceledEvent)) == 1
+
+
+def test_cancel_unknown_or_finished_order_does_nothing():
+    h = Harness()
+    h.send(approve())
+    h.poll()  # filled
+    (submitted,) = h.of_type(OrderSubmittedEvent)
+
+    assert h.manager.request_cancel(submitted.client_order_id, "late") == ()
+    assert h.manager.request_cancel(uuid.uuid4(), "unknown") == ()
+    assert h.broker.cancel_requests == []
+
+
+def test_refused_cancel_publishes_nothing_and_can_be_retried():
+    h = Harness(fill_mode=FillMode.MANUAL)
+    h.send(approve())
+    (submitted,) = h.of_type(OrderSubmittedEvent)
+    h.broker.disconnect()
+
+    assert h.manager.request_cancel(submitted.client_order_id, "x") == ()
+    h.broker.reconnect()
+    (event,) = h.manager.request_cancel(submitted.client_order_id, "x")
+
+    assert isinstance(event, OrderCancelRequestedEvent)
+
+
+def test_cancel_all_open_orders_cancels_every_open_order_and_skips_finished_ones():
+    h = Harness(fill_mode=FillMode.MANUAL)
+    for _ in range(3):
+        h.send(approve())
+    h.broker.fill("FAKE-3", Decimal("10"))
+    h.poll()
+
+    h.manager.cancel_all_open_orders("kill switch")
+    h.drain()
+    h.poll()
+
+    assert sorted(h.broker.cancel_requests) == ["FAKE-1", "FAKE-2"]
+    assert {e.reason for e in h.of_type(OrderCancelRequestedEvent)} == {"kill switch"}
+    assert len(h.of_type(OrderCanceledEvent)) == 2
+    assert h.manager.open_orders == ()
+
+
+def test_cancel_of_an_in_doubt_order_is_sent_once_the_broker_confirms_it():
+    h = Harness(fill_mode=FillMode.MANUAL)
+    h.broker.drop_next_submit_ack()
+    h.send(approve())
+
+    h.manager.cancel_all_open_orders("kill switch")
+    h.drain()
+    assert h.broker.cancel_requests == []
+    h.poll()
+
+    # Found, cancel sent, then the same poll's status check already sees CANCELED.
+    assert [type(e) for e in h.published] == [OrderSubmittedEvent, OrderCancelRequestedEvent, OrderCanceledEvent]
+    assert h.broker.cancel_requests == ["FAKE-1"]
+
+
+# --- Timeouts ---
+
+def test_order_open_past_the_timeout_is_canceled_once():
+    h = Harness(fill_mode=FillMode.MANUAL, manager_kwargs={"order_timeout": timedelta(minutes=10)})
+    h.send(approve())
+
+    h.clock.advance(minutes=9)
+    h.poll()
+    assert h.broker.cancel_requests == []
+
+    h.clock.advance(minutes=1)
+    h.broker.disconnect()
+    h.poll()  # cancel refused while disconnected: retried next poll
+    h.broker.reconnect()
+    h.poll()
+    h.poll()
+
+    (requested,) = h.of_type(OrderCancelRequestedEvent)
+    assert requested.reason.startswith("Timed out")
+    assert len(h.of_type(OrderCanceledEvent)) == 1
+
+
+def test_no_timeout_by_default():
+    h = Harness(fill_mode=FillMode.MANUAL)
+    h.send(approve())
+    h.clock.advance(days=3)
+
+    h.poll()
+
+    assert h.broker.cancel_requests == []
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"order_timeout": timedelta(0)},
+    {"in_doubt_timeout": timedelta(seconds=-1)},
+    {"order_timeout": 60},
+])
+def test_bad_timeouts_are_refused(kwargs):
+    with pytest.raises(ValueError):
+        ExecutionManager(FakeBroker(), **kwargs)
+
+
+# --- Audit log ---
+
+def test_every_published_event_is_logged(caplog):
+    h = Harness()
+
+    with caplog.at_level("INFO", logger="src.execution.manager"):
+        h.send(approve())
+        h.poll()
+
+    assert "execution event OrderSubmittedEvent" in caplog.text
+    assert "execution event FillEvent" in caplog.text
+
+
+# --- Startup reconciliation (start / stop) ---
+
+def restarted(h: Harness) -> Harness:
+    '''A fresh manager (empty memory) on the same broker, like after a process restart.'''
+    return Harness(h.broker)
+
+
+def test_start_adopts_open_broker_orders_after_a_restart():
+    before = Harness(fill_mode=FillMode.MANUAL)
+    signal = make_signal()
+    before.send(approve(signal))
+    before.broker.fill("FAKE-1", Decimal("4"), Decimal("50"))
+    before.poll()
+
+    after = restarted(before)
+    after.manager.start()
+
+    order = after.manager.orders[make_client_order_id(signal.event_id)]
+    assert (order.status, order.broker_order_id, order.filled_quantity) == (
+        OrderStatus.PARTIALLY_FILLED, "FAKE-1", Decimal("4"))
+    assert (order.symbol, order.side, order.quantity) == ("AAPL", OrderSide.BUY, Decimal("10"))
+    assert after.published == []  # earlier fills were published before the restart
+
+
+def test_after_start_only_new_fills_are_published():
+    before = Harness(fill_mode=FillMode.MANUAL)
+    before.send(approve())
+    before.broker.fill("FAKE-1", Decimal("4"))
+    after = restarted(before)
+    after.manager.start()
+
+    after.broker.fill("FAKE-1", Decimal("6"))
+    after.poll()
+
+    (fill,) = after.of_type(FillEvent)
+    assert (fill.fill.quantity, fill.order_status) == (Decimal("6"), OrderStatus.FILLED)
+
+
+def test_signal_approved_again_after_restart_is_not_resubmitted():
+    before = Harness(fill_mode=FillMode.MANUAL)
+    signal = make_signal()
+    before.send(approve(signal))
+    after = restarted(before)
+    after.manager.start()
+
+    after.send(approve(signal))
+
+    assert len(after.broker.submitted) == 1
+    assert after.published == []
+
+
+def test_start_ignores_finished_orders_and_orders_already_known():
+    h = Harness(fill_mode=FillMode.MANUAL)
+    h.send(approve(), approve())
+    h.broker.fill("FAKE-2", Decimal("10"))
+
+    h.manager.start()  # FAKE-1 is known, FAKE-2 is finished at the broker
+
+    assert h.manager.reconcile() == ()
+    assert len(h.manager.orders) == 2
+
+
+def test_start_fails_loudly_when_the_broker_is_unreachable():
+    h = Harness()
+    h.broker.disconnect()
+
+    with pytest.raises(RuntimeError, match="reconciliation failed"):
+        h.manager.start()
+
+
+def test_stop_logs_orders_still_open(caplog):
+    h = Harness(fill_mode=FillMode.MANUAL)
+    h.send(approve())
+
+    with caplog.at_level("WARNING"):
+        h.manager.stop()
+
+    assert "1 order(s) still open" in caplog.text
+
+
+# --- Slippage (expected price from the signal) ---
+
+@dataclass(frozen=True)
+class PricedSignal(SignalEvent):
+    '''SignalEvent as on feature/strategy-context, which adds `price`. Remove once it lands here.'''
+    price: object = None
+
+
+def priced_signal(price: object) -> PricedSignal:
+    return PricedSignal(symbol="AAPL", action=StrategyAction.BUY, units=Decimal("10"),  # pyright: ignore[reportArgumentType]
+                        confidence=Decimal("0.8"), strategy_name="test_strategy", price=price)
+
+
+def test_signal_price_becomes_expected_price_and_fill_reports_slippage():
+    h = Harness(fill_price=Decimal("100.5"))
+
+    h.send(approve(priced_signal(Decimal("100"))))
+    h.poll()
+
+    (fill,) = h.of_type(FillEvent)
+    assert fill.expected_price == Decimal("100")
+    assert (fill.slippage, fill.slippage_bps) == (Decimal("0.5"), Decimal("50"))
+
+
+@pytest.mark.parametrize("price", [None, Decimal("0"), Decimal("NaN"), 100.0, "100"])
+def test_missing_or_unusable_signal_price_only_disables_slippage(price):
+    h = Harness()
+
+    h.send(approve(priced_signal(price)))
+    h.poll()
+
+    (fill,) = h.of_type(FillEvent)
+    assert fill.expected_price is None and fill.slippage is None
+
+
+def test_signal_without_a_price_field_has_no_slippage():
+    h = Harness()
+
+    h.send(approve())
+    h.poll()
+
+    assert h.of_type(FillEvent)[0].expected_price is None
